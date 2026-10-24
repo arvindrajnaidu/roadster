@@ -3,22 +3,43 @@
 // Units: metres, seconds, radians. y is up. Angle > 0 tilts the nose up.
 
 export const G = 9.81;
-export const TACC = 0.78 * G; // lift from one thruster, as acceleration
-export const SPIN = 1.9; // angular accel from one thruster alone (rad/s²)
-export const SPIN_DAMP = 1.6; // angular damping (1/s)
-export const BURN = 1.8; // % of tank per second per thruster
 export const WHEEL_Y = -0.63; // wheel contact below centre of mass
 export const DT = 1 / 120;
 
 export type Vec = [number, number];
 
-// Touchdown limits. Normal is forgiving (the wheels and suspension soak up a
-// bump); Challenge keeps the original prototype's strict limits.
-export type Difficulty = "normal" | "challenge";
+// How the car handles and how strict touchdown is, per difficulty.
+// Easy is floaty and levels itself; Normal levels itself gently and forgives
+// a bump; Challenge is the original prototype: Earth gravity, no help.
+export type Difficulty = "easy" | "normal" | "challenge";
 export interface Limits { vs: number; hs: number; tilt: number; slope: number }
+export interface Profile {
+  gravity: number; // m/s²
+  thrust: number; // lift from one thruster at full throttle, in multiples of gravity
+  spin: number; // angular accel from one thruster alone (rad/s²)
+  spinDamp: number; // angular damping (1/s)
+  selfLevel: number; // pull back towards level while not steering (1/s²); 0 = none
+  burn: number; // % of tank per second per thruster at full throttle
+  limits: Limits;
+}
+export const PROFILES: Record<Difficulty, Profile> = {
+  easy: {
+    gravity: 0.55 * G, thrust: 0.85, spin: 1.15, spinDamp: 2.6, selfLevel: 3.0, burn: 1.0,
+    limits: { vs: 7.0, hs: 5.0, tilt: 25, slope: 22 },
+  },
+  normal: {
+    gravity: G, thrust: 0.78, spin: 1.9, spinDamp: 1.8, selfLevel: 0.8, burn: 1.8,
+    limits: { vs: 5.5, hs: 3.5, tilt: 18, slope: 18 },
+  },
+  challenge: {
+    gravity: G, thrust: 0.78, spin: 1.9, spinDamp: 1.6, selfLevel: 0, burn: 1.8,
+    limits: { vs: 3.0, hs: 2.0, tilt: 10, slope: 12 },
+  },
+};
 export const LIMITS: Record<Difficulty, Limits> = {
-  normal: { vs: 5.5, hs: 3.5, tilt: 18, slope: 18 },
-  challenge: { vs: 3.0, hs: 2.0, tilt: 10, slope: 12 },
+  easy: PROFILES.easy.limits,
+  normal: PROFILES.normal.limits,
+  challenge: PROFILES.challenge.limits,
 };
 
 // Contact points in car space. Wheels may touch; the body may not.
@@ -78,18 +99,21 @@ export interface Sim {
   level: number;
   lv: Level;
   difficulty: Difficulty;
+  profile: Profile;
   limits: Limits;
   x: number; y: number; vx: number; vy: number; a: number; w: number;
   gas: number;
   t: number;
   grounded: boolean;
   mode: Mode;
-  L: boolean; R: boolean;
+  L: number; R: number; // thruster throttles, 0–1, as last applied
   result: Result | null;
   events: SimEvent[];
 }
 
-export interface Input { L: boolean; R: boolean }
+// Thruster throttles, 0–1. Pro controls send 0 or 1; Simple controls send
+// anything in between.
+export interface Input { L: number; R: number }
 
 export function groundY(lv: Level, x: number): number {
   const t = lv.terrain;
@@ -122,8 +146,8 @@ export function newSim(levelIndex: number, difficulty: Difficulty = "normal"): S
   const lv = LEVELS[levelIndex];
   const x = (lv.start[0] + lv.start[1]) / 2;
   return {
-    level: levelIndex, lv, difficulty, limits: LIMITS[difficulty], x, y: groundY(lv, x) - WHEEL_Y, vx: 0, vy: 0, a: 0, w: 0,
-    gas: lv.gas, t: 0, grounded: true, mode: "fly", L: false, R: false,
+    level: levelIndex, lv, difficulty, profile: PROFILES[difficulty], limits: LIMITS[difficulty], x, y: groundY(lv, x) - WHEEL_Y, vx: 0, vy: 0, a: 0, w: 0,
+    gas: lv.gas, t: 0, grounded: true, mode: "fly", L: 0, R: 0,
     result: null, events: [],
   };
 }
@@ -131,15 +155,18 @@ export function newSim(levelIndex: number, difficulty: Difficulty = "normal"): S
 export function simStep(s: Sim, input: Input, dt: number): void {
   if (s.mode !== "fly") return;
   s.t += dt;
+  const pf = s.profile;
   const hasGas = s.gas > 0;
-  s.L = input.L && hasGas;
-  s.R = input.R && hasGas;
-  const n = (s.L ? 1 : 0) + (s.R ? 1 : 0);
-  if (n) s.gas = Math.max(0, s.gas - n * BURN * dt);
+  const clamp01 = (v: number) => Math.min(1, Math.max(0, v || 0));
+  s.L = hasGas ? clamp01(input.L) : 0;
+  s.R = hasGas ? clamp01(input.R) : 0;
+  const n = s.L + s.R;
+  if (n) s.gas = Math.max(0, s.gas - n * pf.burn * dt);
+  const g = pf.gravity, tacc = pf.thrust * g;
 
   if (s.grounded) {
     // One thruster can't lift the car; both together can.
-    if (n === 2) {
+    if (n * tacc > g * 1.05) {
       s.grounded = false;
       s.y += 0.02;
       s.events.push("liftoff");
@@ -150,11 +177,13 @@ export function simStep(s: Sim, input: Input, dt: number): void {
   }
 
   const sn = Math.sin(s.a), cs = Math.cos(s.a);
-  s.vx += -sn * n * TACC * dt;
-  s.vy += (cs * n * TACC - G) * dt;
+  s.vx += -sn * n * tacc * dt;
+  s.vy += (cs * n * tacc - g) * dt;
   s.vx *= 1 - 0.03 * dt;
-  s.w += ((s.R ? 1 : 0) - (s.L ? 1 : 0)) * SPIN * dt;
-  s.w *= Math.max(0, 1 - SPIN_DAMP * dt);
+  const steer = s.R - s.L;
+  s.w += steer * pf.spin * dt;
+  if (Math.abs(steer) < 0.05) s.w -= pf.selfLevel * s.a * dt;
+  s.w *= Math.max(0, 1 - pf.spinDamp * dt);
   s.x += s.vx * dt;
   s.y += s.vy * dt;
   s.a = wrapAngle(s.a + s.w * dt);
@@ -218,7 +247,7 @@ export function onTarget(s: Sim): boolean {
 
 function finish(s: Sim, mode: Mode, reason: string | null, td?: Touchdown): void {
   s.mode = mode;
-  s.L = s.R = false;
+  s.L = s.R = 0;
   s.result = { reason, td: td ?? null, time: s.t, gas: s.gas };
   s.events.push(mode === "landed" ? "landed" : "crash");
 }
@@ -228,4 +257,26 @@ export function rating(td: Touchdown): string {
   if (td.score >= 7) return "Smooth landing";
   if (td.score >= 5) return "Solid landing";
   return "Rough landing";
+}
+
+// Simple controls: the player says where to go, and this works out the two
+// thruster throttles. Holding Lift climbs; letting go sinks gently, slow
+// enough to touch down safely in every mode. With no tilt held, it leans
+// against any sideways drift so the car comes to a stop. Holding an arrow
+// cruises that way at a steady speed rather than accelerating forever.
+export interface SimpleCommand { lift: boolean; left: boolean; right: boolean }
+
+export const SIMPLE = { climb: 3.5, sink: -1.6, cruise: 6, lean: 0.35 };
+
+export function simplePilot(s: Sim, cmd: SimpleCommand): Input {
+  if (s.mode !== "fly" || (s.grounded && !cmd.lift)) return { L: 0, R: 0 };
+  const pf = s.profile, tacc = pf.thrust * pf.gravity;
+  const vxDes = cmd.left === cmd.right ? 0 : cmd.right ? SIMPLE.cruise : -SIMPLE.cruise;
+  // Nose up (a > 0) pushes left, so lean against the speed we're missing.
+  const aDes = Math.max(-SIMPLE.lean, Math.min(SIMPLE.lean, -0.12 * (vxDes - s.vx)));
+  const vyDes = cmd.lift ? SIMPLE.climb : SIMPLE.sink;
+  const total = (pf.gravity + 2.5 * (vyDes - s.vy)) / (tacc * Math.max(0.5, Math.cos(s.a)));
+  const diff = Math.max(-1, Math.min(1, (7 * (aDes - s.a) - 3.2 * s.w) / pf.spin));
+  const clamp01 = (v: number) => Math.min(1, Math.max(0, v));
+  return { L: clamp01((total - diff) / 2), R: clamp01((total + diff) / 2) };
 }

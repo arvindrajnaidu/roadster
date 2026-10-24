@@ -88,6 +88,9 @@ body {
   padding-right: max(16px, env(safe-area-inset-right, 0px));
 }
 .rg-root.touch .rg-pads { display: flex; }
+.rg-pad-group { display: flex; gap: 12px; align-items: flex-end; }
+.rg-root.simple .pro-only, .rg-root:not(.simple) .simple-only { display: none; }
+.rg-thr.rg-small { width: min(22vw, 96px); font-size: 22px; letter-spacing: 0; }
 .rg-thr {
   pointer-events: auto; touch-action: none; width: min(36vw, 150px); max-width: 100%; aspect-ratio: 1; border-radius: 50%;
   background: radial-gradient(circle at 50% 40%, rgba(168, 220, 255, 0.16), rgba(9, 12, 26, 0.55) 70%);
@@ -132,11 +135,12 @@ body {
 .rg-lvbtn b { font: 700 15px var(--f-display); letter-spacing: 0.05em; text-transform: uppercase; }
 .rg-lvbtn span { font-size: 11px; color: var(--muted); overflow-wrap: anywhere; }
 .rg-lvbtn[aria-pressed="true"] { border-color: var(--plume); background: rgba(168, 220, 255, 0.1); }
-.rg-modes { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+.rg-modes { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
 .rg-mode {
   text-align: left; background: transparent; border: 0; padding: 9px 12px; color: var(--ink); cursor: pointer;
   display: grid; gap: 1px; min-width: 0;
 }
+.rg-modes.two { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .rg-mode + .rg-mode { border-left: 1px solid var(--line); }
 .rg-mode b { font: 700 15px var(--f-display); letter-spacing: 0.08em; text-transform: uppercase; }
 .rg-mode span { font-size: 11px; color: var(--muted); }

@@ -11,28 +11,32 @@ npm run dev
 
 Open http://localhost:3000.
 
-| Input | Effect |
-|---|---|
-| `←` / `A` or the left thumb pad | Left thruster: lifts the tail, pushes the car right |
-| `→` / `D` or the right thumb pad | Right thruster: lifts the nose, pushes the car left |
-| `↑` / `W` / `Space` or both pads | Both thrusters: straight up |
-| `R` | Restart the test |
+There are two control schemes, switchable on the briefing card:
 
-Only both thrusters together can lift the car off the ground.
+| Simple controls (default) | Pro controls |
+|---|---|
+| Hold `↑` / `Space` / **Lift** to climb; let go to sink gently | `←` / `A` or left pad: left thruster (lifts the tail, pushes right) |
+| `←` `→` / **◀ ▶** to fly left or right at a steady speed | `→` / `D` or right pad: right thruster (lifts the nose, pushes left) |
+| With no arrow held, the car brakes its own drift | `↑` / `Space` or both pads: both thrusters, straight up |
+
+Simple controls still fly on the two thrusters: `simplePilot` in `lib/game/sim.ts` works out a throttle for each one. `R` restarts a test.
 
 ### Modes and scoring
 
-- **Normal**: forgiving touchdowns (under 5.5 m/s down, 3.5 m/s drift, 18° tilt).
-- **Challenge**: the original prototype limits (under 3 m/s down, 2 m/s drift, 10° tilt).
+| Mode | Handling | Touchdown limits |
+|---|---|---|
+| **Easy** (default) | About half Earth gravity, slow spin, levels itself, more gas | 7 m/s down, 5 m/s drift, 25° |
+| **Normal** | Earth gravity, levels itself gently | 5.5 m/s down, 3.5 m/s drift, 18° |
+| **Challenge** | Earth gravity, no help (the original prototype) | 3 m/s down, 2 m/s drift, 10° |
 
-Every landing on the target pad is scored out of 10 against the current mode's limits: vertical speed counts most, then drift and tilt, then distance from the pad centre.
+Every landing on the target pad is scored out of 10 against the current mode's limits: vertical speed counts most, then drift and tilt, then distance from the pad centre. Best scores are kept per mode.
 
 ## Code
 
 - `lib/game/sim.ts`: flight physics and landing rules. No DOM, no framework; tested headless.
 - `lib/game/engine.ts`: canvas rendering, HUD, input, sound.
 - `components/RoadsterGame.tsx`: mounts the engine in the page.
-- `tests/autopilot.test.ts`: an autopilot flies every level in both modes; plus touchdown rule checks. Run with `npm test`.
+- `tests/autopilot.test.ts`: autopilots fly every level in every mode with both control schemes, plus touchdown rule checks. Run with `npm test`.
 
 ## Native apps
 

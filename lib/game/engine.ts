@@ -1,7 +1,7 @@
 // Game shell: input, canvas rendering, HUD, cards and sound around the sim.
 import {
   DT, G, LEVELS, LIMITS, NOZZLES, WHEELS, WHEEL_Y,
-  groundY, newSim, rating, simStep, toWorld,
+  groundY, newSim, rating, simStep, simplePilot, toWorld,
   type Difficulty, type Input, type Sim,
 } from "./sim";
 
@@ -32,8 +32,15 @@ const MARKUP = `
   </div>
 </div>
 <div class="rg-pads">
-  <button class="rg-thr" data-ref="padL" type="button" aria-label="Left thruster">Left<span>thruster</span></button>
-  <button class="rg-thr" data-ref="padR" type="button" aria-label="Right thruster">Right<span>thruster</span></button>
+  <div class="rg-pad-group">
+    <button class="rg-thr pro-only" data-ref="padL" type="button" aria-label="Left thruster">Left<span>thruster</span></button>
+    <button class="rg-thr rg-small simple-only" data-ref="padTL" type="button" aria-label="Tilt left">◀<span>left</span></button>
+    <button class="rg-thr rg-small simple-only" data-ref="padTR" type="button" aria-label="Tilt right">▶<span>right</span></button>
+  </div>
+  <div class="rg-pad-group">
+    <button class="rg-thr pro-only" data-ref="padR" type="button" aria-label="Right thruster">Right<span>thruster</span></button>
+    <button class="rg-thr simple-only" data-ref="padLift" type="button" aria-label="Lift">Lift<span>hold to climb</span></button>
+  </div>
 </div>
 <div class="rg-overlay" data-ref="overlay"><div class="rg-card" data-ref="card"></div></div>
 `;
@@ -60,6 +67,7 @@ export function mountGame(root: HTMLElement): () => void {
   const roAlt = ref("roAlt"), roVs = ref("roVs"), roHs = ref("roHs"), roTilt = ref("roTilt");
   const gasBar = ref("gasBar"), gasPct = ref("gasPct"), soundBtn = ref<HTMLButtonElement>("soundBtn");
   const padL = ref("padL"), padR = ref("padR");
+  const padTL = ref("padTL"), padTR = ref("padTR"), padLift = ref("padLift");
   const dataFont = getComputedStyle(root).getPropertyValue("--f-data").trim() || "monospace";
 
   const cleanups: Array<() => void> = [];
@@ -70,13 +78,19 @@ export function mountGame(root: HTMLElement): () => void {
 
   const reduceMotion = matchMedia("(prefers-reduced-motion: reduce)").matches;
   let W = 0, H = 0, DPR = 1, PPM = 20;
-  let difficulty: Difficulty = store.get<Difficulty>("roadster.difficulty") === "challenge" ? "challenge" : "normal";
+  const MODES: Difficulty[] = ["easy", "normal", "challenge"];
+  const MODE_LABEL: Record<Difficulty, string> = { easy: "Easy", normal: "Normal", challenge: "Challenge" };
+  const storedMode = store.get<Difficulty>("roadster.difficulty");
+  let difficulty: Difficulty = storedMode && MODES.includes(storedMode) ? storedMode : "easy";
+  // Simple: Lift + Tilt, the game balances the thrusters. Pro: fire each thruster yourself.
+  type Controls = "simple" | "pro";
+  let controls: Controls = store.get<Controls>("roadster.controls") === "pro" ? "pro" : "simple";
+  root.classList.toggle("simple", controls === "simple");
   let sim: Sim = newSim(0, difficulty);
   let selected = 0;
   let paused = true;
-  const input: Input = { L: false, R: false };
   const keys = new Set<string>();
-  const padState = { L: false, R: false };
+  const padState = { L: false, R: false, TL: false, TR: false, Lift: false };
   const cam = { x: sim.x, y: sim.y, shake: 0 };
   let particles: Particle[] = [];
   let resultTimer = 0;
@@ -102,10 +116,21 @@ export function mountGame(root: HTMLElement): () => void {
   // ---- input ----
   const KEY_L = ["ArrowLeft", "KeyA"], KEY_R = ["ArrowRight", "KeyD"], KEY_BOTH = ["ArrowUp", "KeyW", "Space"];
   const ALL_KEYS = [...KEY_L, ...KEY_R, ...KEY_BOTH];
+  // Pro controls read the keys as thrusters; Simple controls read the same keys
+  // as Lift and Tilt and let simplePilot fire the thrusters.
+  function readInput(): Input {
+    const up = KEY_BOTH.some(k => keys.has(k));
+    const left = KEY_L.some(k => keys.has(k));
+    const right = KEY_R.some(k => keys.has(k));
+    if (controls === "simple") {
+      return simplePilot(sim, { lift: up || padState.Lift, left: left || padState.TL, right: right || padState.TR });
+    }
+    return { L: up || left || padState.L ? 1 : 0, R: up || right || padState.R ? 1 : 0 };
+  }
   function syncKeys() {
-    const both = KEY_BOTH.some(k => keys.has(k));
-    input.L = both || KEY_L.some(k => keys.has(k)) || padState.L;
-    input.R = both || KEY_R.some(k => keys.has(k)) || padState.R;
+    padTL.classList.toggle("on", padState.TL || KEY_L.some(k => keys.has(k)));
+    padTR.classList.toggle("on", padState.TR || KEY_R.some(k => keys.has(k)));
+    padLift.classList.toggle("on", padState.Lift || KEY_BOTH.some(k => keys.has(k)));
   }
   on("keydown", e => {
     if (ALL_KEYS.includes(e.code)) { e.preventDefault(); keys.add(e.code); syncKeys(); }
@@ -117,10 +142,14 @@ export function mountGame(root: HTMLElement): () => void {
     }
   });
   on("keyup", e => { keys.delete(e.code); syncKeys(); });
-  on("blur", () => { keys.clear(); padState.L = padState.R = false; syncKeys(); });
+  on("blur", () => {
+    keys.clear();
+    padState.L = padState.R = padState.TL = padState.TR = padState.Lift = false;
+    syncKeys();
+  });
   on("touchstart", () => { touchUi = true; root.classList.add("touch"); }, { once: true, passive: true });
 
-  function bindPad(el: HTMLElement, side: "L" | "R") {
+  function bindPad(el: HTMLElement, side: keyof typeof padState) {
     const set = (v: boolean) => { padState[side] = v; el.classList.toggle("on", v); syncKeys(); ensureAudio(); };
     el.addEventListener("pointerdown", e => {
       e.preventDefault();
@@ -132,6 +161,9 @@ export function mountGame(root: HTMLElement): () => void {
   }
   bindPad(padL, "L");
   bindPad(padR, "R");
+  bindPad(padTL, "TL");
+  bindPad(padTR, "TR");
+  bindPad(padLift, "Lift");
 
   // ---- sound: cold-gas hiss from filtered noise ----
   let audio: { ac: AudioContext; gain: GainNode; buf: AudioBuffer } | null = null;
@@ -187,23 +219,30 @@ export function mountGame(root: HTMLElement): () => void {
   function modeSwitch() {
     const btn = (d: Difficulty, label: string, note: string) =>
       `<button class="rg-mode" type="button" data-mode="${d}" aria-pressed="${difficulty === d}"><b>${label}</b><span>${note}</span></button>`;
-    return `<div class="rg-modes" role="group" aria-label="Mode">${btn("normal", "Normal", "Forgiving landings")}${btn("challenge", "Challenge", "Strict landing limits")}</div>`;
+    return `<div class="rg-modes" role="group" aria-label="Mode">${btn("easy", "Easy", "Floaty, levels itself")}${btn("normal", "Normal", "Forgiving landings")}${btn("challenge", "Challenge", "Earth gravity, no help")}</div>`;
+  }
+  function controlsSwitch() {
+    const btn = (c: Controls, label: string, note: string) =>
+      `<button class="rg-mode" type="button" data-controls="${c}" aria-pressed="${controls === c}"><b>${label}</b><span>${note}</span></button>`;
+    return `<div class="rg-modes two" role="group" aria-label="Controls">${btn("simple", "Simple controls", "Lift and tilt")}${btn("pro", "Pro controls", "Fire each thruster")}</div>`;
   }
   function controlsHelp() {
     const lim = LIMITS[difficulty];
-    const keysHelp = `<div class="rg-controls">
-      <span><kbd>←</kbd> <kbd>A</kbd></span><span>Left thruster: lifts the tail and pushes you right</span>
-      <span><kbd>→</kbd> <kbd>D</kbd></span><span>Right thruster: lifts the nose and pushes you left</span>
-      <span><kbd>↑</kbd> <kbd>Space</kbd></span><span>Both thrusters: straight up</span>
-      <span><kbd>R</kbd></span><span>Restart the test</span>
+    const k = (desk: string, touch: string) => (touchUi ? `<kbd>${touch}</kbd>` : desk);
+    const help = controls === "simple"
+      ? `<div class="rg-controls">
+      <span>${k("<kbd>↑</kbd> <kbd>Space</kbd>", "Lift")}</span><span>Hold to climb. Let go and the car sinks gently and stops drifting.</span>
+      <span>${k("<kbd>←</kbd> <kbd>→</kbd>", "◀ ▶")}</span><span>Fly left or right</span>
+      ${touchUi ? "" : "<span><kbd>R</kbd></span><span>Restart the test</span>"}
+    </div>`
+      : `<div class="rg-controls">
+      <span>${k("<kbd>←</kbd> <kbd>A</kbd>", "Left")}</span><span>Left thruster: lifts the tail and pushes you right</span>
+      <span>${k("<kbd>→</kbd> <kbd>D</kbd>", "Right")}</span><span>Right thruster: lifts the nose and pushes you left</span>
+      <span>${k("<kbd>↑</kbd> <kbd>Space</kbd>", "Both")}</span><span>Both thrusters: straight up</span>
+      ${touchUi ? "" : "<span><kbd>R</kbd></span><span>Restart the test</span>"}
     </div>`;
-    const touchHelp = `<div class="rg-controls">
-      <span><kbd>Left</kbd></span><span>Lifts the tail and pushes you right</span>
-      <span><kbd>Right</kbd></span><span>Lifts the nose and pushes you left</span>
-      <span><kbd>Both</kbd></span><span>Straight up</span>
-    </div>`;
-    return `${touchUi ? touchHelp : keysHelp}
-      <p class="dim">${touchUi ? "Hold the round pads with your thumbs. " : ""}Touch down under ${lim.vs} m/s, drifting under ${lim.hs} m/s, and within ${lim.tilt}° of level. Each landing is scored out of 10.</p>`;
+    return `${help}
+      <p class="dim">Touch down under ${lim.vs} m/s, drifting under ${lim.hs} m/s, and within ${lim.tilt}° of level. Each landing is scored out of 10.</p>`;
   }
   function showBriefing() {
     paused = true;
@@ -213,6 +252,7 @@ export function mountGame(root: HTMLElement): () => void {
       <h1>${lv.name}</h1>
       <p>${lv.brief}</p>
       ${modeSwitch()}
+      ${controlsSwitch()}
       ${levelButtons()}
       ${controlsHelp()}
       <div class="row"><button class="primary" type="button" data-act="go">Start test</button></div>`;
@@ -222,10 +262,16 @@ export function mountGame(root: HTMLElement): () => void {
       startLevel(selected, true);
       showBriefing();
     }));
-    card.querySelectorAll<HTMLButtonElement>(".rg-mode").forEach(b => b.addEventListener("click", () => {
-      difficulty = b.dataset.mode === "challenge" ? "challenge" : "normal";
+    card.querySelectorAll<HTMLButtonElement>("[data-mode]").forEach(b => b.addEventListener("click", () => {
+      difficulty = b.dataset.mode as Difficulty;
       store.set("roadster.difficulty", difficulty);
       startLevel(selected, true);
+      showBriefing();
+    }));
+    card.querySelectorAll<HTMLButtonElement>("[data-controls]").forEach(b => b.addEventListener("click", () => {
+      controls = b.dataset.controls === "pro" ? "pro" : "simple";
+      store.set("roadster.controls", controls);
+      root.classList.toggle("simple", controls === "simple");
       showBriefing();
     }));
     card.querySelector('[data-act="go"]')!.addEventListener("click", () => { ensureAudio(); startLevel(selected); });
@@ -239,7 +285,7 @@ export function mountGame(root: HTMLElement): () => void {
       const isBest = !prev || r.td.score > prev.score;
       if (isBest) { best[bestKey(sim.level)] = { score: r.td.score, vs: r.td.vs }; store.set("roadster.best.v2", best); }
       card.innerHTML = `
-        <div class="eyebrow">Test ${sim.level + 1} · ${lv.name} · ${difficulty === "normal" ? "Normal" : "Challenge"}</div>
+        <div class="eyebrow">Test ${sim.level + 1} · ${lv.name} · ${MODE_LABEL[difficulty]}</div>
         <div class="rg-score"><b>${r.td.score.toFixed(1)}</b><span>/ 10</span>${isBest && prev ? '<em>New best</em>' : ""}</div>
         <h1 class="ok">${rating(r.td)}</h1>
         <div class="rg-stats">
@@ -434,10 +480,10 @@ export function mountGame(root: HTMLElement): () => void {
     const crashed = sim.mode === "crash";
 
     // thruster plumes (cold gas: pale, fast, flickering)
-    [sim.L, sim.R].forEach((lit, i) => {
-      if (!lit) return;
+    [sim.L, sim.R].forEach((th, i) => {
+      if (th < 0.03) return;
       const [nx, ny] = NOZZLES[i];
-      const len = 1.4 + (reduceMotion ? 0.3 : Math.random() * 0.6);
+      const len = (0.5 + 0.9 * th) + (reduceMotion ? 0.3 : Math.random() * 0.6) * th;
       const fg = ctx.createLinearGradient(0, ny, 0, ny - len);
       fg.addColorStop(0, "rgba(255,255,255,0.95)"); fg.addColorStop(0.3, "rgba(168,220,255,0.75)"); fg.addColorStop(1, "rgba(168,220,255,0)");
       ctx.fillStyle = fg;
@@ -530,8 +576,8 @@ export function mountGame(root: HTMLElement): () => void {
     gasBar.style.width = `${sim.gas}%`;
     gasBar.classList.toggle("low", sim.gas < 20);
     gasPct.textContent = `${Math.round(sim.gas)}%`;
-    padL.classList.toggle("on", sim.L || padState.L);
-    padR.classList.toggle("on", sim.R || padState.R);
+    padL.classList.toggle("on", sim.L > 0.1 || padState.L);
+    padR.classList.toggle("on", sim.R > 0.1 || padState.R);
   }
 
   // ---- main loop ----
@@ -541,7 +587,7 @@ export function mountGame(root: HTMLElement): () => void {
     last = now;
     if (!paused) {
       acc += dt;
-      while (acc >= DT) { simStep(sim, input, DT); acc -= DT; }
+      while (acc >= DT) { simStep(sim, readInput(), DT); acc -= DT; }
     }
     for (const ev of sim.events) {
       if (ev === "crash") { emitCrash(); cam.shake = reduceMotion ? 0 : 1; thud(); resultTimer = 1.4; }
@@ -557,8 +603,8 @@ export function mountGame(root: HTMLElement): () => void {
     plumeAcc += dt;
     while (plumeAcc > 1 / 60) {
       plumeAcc -= 1 / 60;
-      if (sim.L) emitPlume(0);
-      if (sim.R) emitPlume(1);
+      if (Math.random() < sim.L) emitPlume(0);
+      if (Math.random() < sim.R) emitPlume(1);
     }
     updateParticles(dt);
 
@@ -579,7 +625,7 @@ export function mountGame(root: HTMLElement): () => void {
     updateHud();
 
     if (audio) {
-      const n = (sim.L ? 1 : 0) + (sim.R ? 1 : 0);
+      const n = sim.L + sim.R;
       audio.gain.gain.setTargetAtTime(soundOn && !paused ? n * 0.11 : 0, audio.ac.currentTime, 0.03);
     }
     raf = requestAnimationFrame(frame);

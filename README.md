@@ -19,7 +19,7 @@ There are two control schemes, switchable on the briefing card:
 | `←` `→` / **◀ ▶** to fly left or right at a steady speed | `→` / `D` or right pad: right thruster (lifts the nose, pushes left) |
 | With no arrow held, the car brakes its own drift | `↑` / `Space` or both pads: both thrusters, straight up |
 
-Simple controls still fly on the two thrusters: `simplePilot` in `lib/game/sim.ts` works out a throttle for each one. `R` restarts a test.
+Simple controls still fly on the two thrusters: `simplePilot` in `lib/game/sim.ts` works out a throttle for each one. `R` restarts a test. The ❚❚ button (or `Esc` / `P`) pauses, with Resume, Restart and All tests to go back to the lobby. Leaving the app mid-flight pauses it too.
 
 ### Modes and scoring
 

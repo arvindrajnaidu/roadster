@@ -13,8 +13,11 @@ const MARKUP = `
 <canvas class="rg-canvas" aria-label="Game view: a Tesla Roadster on a desert test range"></canvas>
 <div class="rg-hud">
   <div class="rg-mission">
-    <div class="rg-lvl" data-ref="lvlName"></div>
-    <div class="rg-obj">Land on the green pad</div>
+    <button class="rg-iconbtn rg-pause" data-ref="pauseBtn" type="button" aria-label="Pause">❚❚</button>
+    <div class="rg-mission-text">
+      <div class="rg-lvl" data-ref="lvlName"></div>
+      <div class="rg-obj">Land on the green pad</div>
+    </div>
   </div>
   <div class="rg-readouts">
     <div class="rg-ro" data-ref="roAlt"><span class="k">Alt</span><span class="v"></span></div>
@@ -66,6 +69,7 @@ export function mountGame(root: HTMLElement): () => void {
   const overlay = ref("overlay"), card = ref("card");
   const roAlt = ref("roAlt"), roVs = ref("roVs"), roHs = ref("roHs"), roTilt = ref("roTilt");
   const gasBar = ref("gasBar"), gasPct = ref("gasPct"), soundBtn = ref<HTMLButtonElement>("soundBtn");
+  const pauseBtn = ref<HTMLButtonElement>("pauseBtn");
   const padL = ref("padL"), padR = ref("padR");
   const padTL = ref("padTL"), padTR = ref("padTR"), padLift = ref("padLift");
   const dataFont = getComputedStyle(root).getPropertyValue("--f-data").trim() || "monospace";
@@ -136,12 +140,20 @@ export function mountGame(root: HTMLElement): () => void {
     if (ALL_KEYS.includes(e.code)) { e.preventDefault(); keys.add(e.code); syncKeys(); }
     if (e.code === "KeyR" && !e.repeat) startLevel(sim.level);
     if (e.code === "KeyM" && !e.repeat) toggleSound();
+    if ((e.code === "Escape" || e.code === "KeyP") && !e.repeat) {
+      if (!paused) showPause();
+      else if (card.querySelector('[data-act="resume"]')) resume();
+    }
     if ((e.code === "Enter" || e.code === "NumpadEnter") && paused) {
       const b = card.querySelector<HTMLButtonElement>(".primary");
       if (b) { e.preventDefault(); b.click(); }
     }
   });
   on("keyup", e => { keys.delete(e.code); syncKeys(); });
+  // Going to the home screen or another tab mid-flight pauses the test.
+  const onVisibility = () => { if (document.hidden) showPause(); };
+  document.addEventListener("visibilitychange", onVisibility);
+  cleanups.push(() => document.removeEventListener("visibilitychange", onVisibility));
   on("blur", () => {
     keys.clear();
     padState.L = padState.R = padState.TL = padState.TR = padState.Lift = false;
@@ -323,6 +335,40 @@ export function mountGame(root: HTMLElement): () => void {
     card.querySelector('[data-act="again"]')!.addEventListener("click", () => startLevel(sim.level));
     overlay.hidden = false;
   }
+
+  function releaseControls() {
+    keys.clear();
+    padState.L = padState.R = padState.TL = padState.TR = padState.Lift = false;
+    syncKeys();
+  }
+  function showPause() {
+    if (paused || sim.mode !== "fly") return;
+    paused = true;
+    releaseControls();
+    const lv = LEVELS[sim.level];
+    card.innerHTML = `
+      <div class="eyebrow">Test ${sim.level + 1} · ${lv.name} · ${MODE_LABEL[difficulty]}</div>
+      <h1>Paused</h1>
+      <div class="row">
+        <button class="ghost" type="button" data-act="menu">All tests</button>
+        <button class="ghost" type="button" data-act="restart">Restart</button>
+        <button class="primary" type="button" data-act="resume">Resume</button>
+      </div>`;
+    card.querySelector('[data-act="resume"]')!.addEventListener("click", resume);
+    card.querySelector('[data-act="restart"]')!.addEventListener("click", () => startLevel(sim.level));
+    card.querySelector('[data-act="menu"]')!.addEventListener("click", () => {
+      selected = sim.level;
+      startLevel(selected, true);
+      showBriefing();
+    });
+    overlay.hidden = false;
+    card.querySelector<HTMLButtonElement>('[data-act="resume"]')!.focus();
+  }
+  function resume() {
+    paused = false;
+    overlay.hidden = true;
+  }
+  pauseBtn.addEventListener("click", showPause);
 
   function startLevel(i: number, keepPaused = false) {
     sim = newSim(i, difficulty);
@@ -564,6 +610,8 @@ export function mountGame(root: HTMLElement): () => void {
     else delete node.dataset.s;
   }
   function updateHud() {
+    const canPause = !paused && sim.mode === "fly";
+    if (pauseBtn.hidden === canPause) pauseBtn.hidden = !canPause;
     const alt = Math.max(0, sim.y + WHEEL_Y - groundY(sim.lv, sim.x));
     const air = !sim.grounded && sim.mode === "fly";
     const lim = sim.limits;

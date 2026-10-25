@@ -174,3 +174,20 @@ body {
 @media (prefers-reduced-motion: reduce) {
   .rg-thr, .rg-gas .bar i { transition: none; }
 }
+
+/* Privacy and support pages: plain scrolling text on the same night palette. */
+.legal {
+  position: fixed; inset: 0; overflow-y: auto; touch-action: pan-y;
+  user-select: text; -webkit-user-select: text;
+  padding: calc(env(safe-area-inset-top, 0px) + 32px) max(20px, env(safe-area-inset-right, 0px)) calc(env(safe-area-inset-bottom, 0px) + 48px) max(20px, env(safe-area-inset-left, 0px));
+}
+.legal-inner { max-width: 640px; margin: 0 auto; line-height: 1.6; }
+.legal h1 { font-family: var(--f-display); font-weight: 800; font-size: 34px; letter-spacing: 0.02em; text-transform: uppercase; margin: 16px 0 4px; }
+.legal h2 { font-family: var(--f-display); font-weight: 700; font-size: 20px; letter-spacing: 0.04em; text-transform: uppercase; margin: 28px 0 6px; color: var(--plume); }
+.legal p, .legal li, .legal dd { color: var(--ink); }
+.legal ul { padding-left: 20px; }
+.legal dt { font-weight: 600; margin-top: 16px; }
+.legal dd { margin: 4px 0 0; color: var(--muted); }
+.legal a { color: var(--plume); }
+.legal-back { font-size: 14px; text-decoration: none; }
+.legal-date, .legal-foot { color: var(--muted); font-size: 14px; }

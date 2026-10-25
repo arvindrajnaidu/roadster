@@ -10,7 +10,7 @@ interface Particle { x: number; y: number; vx: number; vy: number; life: number;
 interface Best { score: number; vs: number }
 
 const MARKUP = `
-<canvas class="rg-canvas" aria-label="Game view: a Tesla Roadster on a desert test range"></canvas>
+<canvas class="rg-canvas" aria-label="Game view: a roadster on a desert test range"></canvas>
 <div class="rg-hud">
   <div class="rg-mission">
     <button class="rg-iconbtn rg-pause" data-ref="pauseBtn" type="button" aria-label="Pause">❚❚</button>
